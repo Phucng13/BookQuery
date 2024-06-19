@@ -4,7 +4,7 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.LongWritable;
+// import org.apache.hadoop.io.LongWritable;
 // import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.mapreduce.*;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
@@ -27,9 +27,8 @@ import java.util.List;
 
 public class BookQuery {
 
-    public static class Mapper1 extends Mapper<LongWritable, Text, Text, Text> {
+    public static class Mapper1 extends Mapper<Object, Text, Text, Text> {
         private final Set<String> queryTermSet = new HashSet<>();
-        // private final Set<String> allTermSet = new HashSet<>();
 
         // setup is called ONCE for each mapper, then all calls to the map func is made
         @Override
@@ -45,22 +44,8 @@ public class BookQuery {
             }
         }
 
-        /*
-        In Hadoop MapReduce, you don’t directly pass a folder to a mapper. Instead, you specify the input path(s) for the job, and Hadoop’s InputFormat determines how to split the input files and directories into input splits. Each input split is then processed by a separate mapper.
-            Set the input path in your driver code:
-                FileInputFormat.addInputPath(job, new Path("path/to/your/input/directory"));
-                    In this example, replace "path/to/your/input/directory" with the path to your input directory. This can be a directory in HDFS (Hadoop Distributed File System), and it can contain multiple files. Hadoop will process all files in the specified directory and any subdirectories.
-        Each file in the directory will be split into chunks (typically on block boundaries), and each chunk will be assigned to a separate mapper. If the files are small, several files can be grouped into a single split and processed by one mapper.
-            In your mapper, you can access the current file’s name and path like this:
-                FileSplit fileSplit = (FileSplit)context.getInputSplit();
-                String filename = fileSplit.getPath().getName();
-
-        This can be useful if you need to know which file the current key-value pair came from.
-
-        Remember, the mapper doesn't know about the directory or other files; it only processes the key-value pairs that are passed to it from its input split. Let me know if you need further clarification or help! 😊
-        */
         @Override
-        protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+        protected void map(Object key, Text value, Context context) throws IOException, InterruptedException {
             // Parse the current document name to use as URL
             FileSplit fileSplit = (FileSplit) context.getInputSplit();
             String fileNameAsUrl = fileSplit.getPath().getName().split("\\.")[0];
@@ -75,26 +60,45 @@ public class BookQuery {
             }
             // Filter out terms that are not in the query
             mapTermSet.retainAll(queryTermSet);
-//            Set<String> NotYetInAllTermSet = new HashSet<>(mapTermSet);
-//            NotYetInAllTermSet.removeAll(allTermSet);
-//            // Add the term set of mapper to the set of all terms
-//            allTermSet.addAll(NotYetInAllTermSet);
 
             // Emit intermediate key-value pairs [term, URL@length]
-            int length = mapTermSet.size();
-            for (String termAsKey : mapTermSet) {
-                context.write(new Text(termAsKey), new Text(fileNameAsUrl + "@" + length));
+            // int length = mapTermSet.size();
+            for (String term : mapTermSet) {
+                System.out.println(fileNameAsUrl + "   " + term);
+                context.write(new Text(fileNameAsUrl), new Text(term));
             }
         }
     }
 
-    public static class Reducer1 extends Reducer<Text, Text, LongWritable, Text> {
+    public static class Reducer1 extends Reducer<Text, Text, Text, Text> {
+        @Override
+        protected void reduce(Text Url, Iterable<Text> terms, Context context) throws IOException, InterruptedException {
+            // Get number of terms in the current document
+            int termCount = 0;
+            for (Text value : terms) {
+                termCount++;
+            }
+
+            for (Text term : terms) {
+                context.write(new Text(term), new Text(Url + "@" + termCount));
+            }
+        }
+    }
+
+    public static class Mapper2 extends Mapper<Object, Text, Text, Text> {
+        @Override
+        protected void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+            context.write(new Text(String.valueOf(key)), new Text(value));
+        }
+    }
+
+    public static class Reducer2 extends Reducer<Text, Text, Text, Text> {
         // auto-increment LongWritable key
-        private long autoIncrement = 0;
+        // private long autoIncrement = 0;
 
         @Override
         protected void reduce(Text termAsKey, Iterable<Text> values, Context context) throws IOException, InterruptedException {
-            autoIncrement += 1;
+            // autoIncrement += 1;
 
             // Read input
             List<String> urlAndLengthList = new ArrayList<>();
@@ -112,12 +116,12 @@ public class BookQuery {
 
                 // Emit the term and sorted group
                 // context.write(new Text(termAsKey), new Text(String.join(",", urlAndLengthList)));
-                context.write(new LongWritable(autoIncrement), new Text(String.join(",", urlAndLengthList)));
+                context.write(new Text(termAsKey), new Text(String.join(",", urlAndLengthList)));
             }
         }
     }
 
-    public static class Mapper2 extends Mapper<LongWritable, Text, Text, Text> {
+    public static class Mapper3 extends Mapper<Object, Text, Text, Text> {
         private final Set<String> queryTermSet = new HashSet<>();
         private String queryTermsCount;
 
@@ -126,7 +130,6 @@ public class BookQuery {
         protected void setup(Context context) throws IOException, InterruptedException {
             // Read the query terms from the configuration and store them in a set
             String query = context.getConfiguration().get("query");
-
             // Split the query into words
             String[] queryWords = query.split("\\W+");
             // Create terms as 3 consecutive words
@@ -138,22 +141,22 @@ public class BookQuery {
         }
 
         @Override
-        protected void map(LongWritable autoIncrement, Text value, Context context) throws IOException, InterruptedException {
+        protected void map(Object autoIncrement, Text value, Context context) throws IOException, InterruptedException {
             // Parse the input value to get the list of URLs
             String[] urlAndLengthArray = value.toString().split("\t")[1].split(",");
             // String[] urlAndLengthArray = value.toString().split(",");
 
             // Emit pairs of URLs for Jaccard similarity calculation
+            String oneString = "1";
             for (String urlAndLength : urlAndLengthArray) {
                 if (!urlAndLength.split("@")[0].equals("query")) {
-                    String oneString = "1";
                     context.write(new Text(urlAndLength + "@query@" + queryTermsCount), new Text(oneString));
                 }
             }
         }
     }
 
-    public static class Reducer2 extends Reducer<Text, Text, Text, Text> {
+    public static class Reducer3 extends Reducer<Text, Text, Text, Text> {
         @Override
         protected void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
             int sum = 0;
@@ -168,7 +171,7 @@ public class BookQuery {
             int len2 = Integer.parseInt(urlOrLength[3]);
 
             // Calculate the Jaccard similarity
-            double jaccard = (sum != ((len1 + len2) - sum)) ? ((double) sum / ((len1 + len2) - sum)) : 1;
+            double jaccard = (sum != (len1 + len2)) ? ((double) sum / ((len1 + len2) - sum)) : 1;
             context.write(new Text(urlOrLength[0] + " - " + urlOrLength[2]), new Text(String.valueOf(jaccard)));
         }
     }
@@ -183,13 +186,17 @@ public class BookQuery {
         } */
         // BasicConfigurator.configure();
 
-        Configuration conf = new Configuration();
+        if (args.length != 3) {
+            System.err.println("Usage: <input> <intermediate output> <final output>");
+            System.exit(1);
+        }
         String input = args[0];
         String output = args[1];
         String queryPath = args[2];
+
+        Configuration conf = new Configuration();
         FileSystem fs = FileSystem.get(URI.create(input), conf);
-        /* In Hadoop MapReduce, if the input is a folder of text files, the value argument of the mapper function will be the content of a single line from one of the text files
-        The input to the mapper is split up by the InputFormat specified in the job configuration, the default being TextInputFormat, which splits up text files line by line. If you need a different way of splitting your input, you would need to use a different InputFormat. For example, WholeFileInputFormat can be used if you want each file to be an input to the mapper. */
+
         // Read the query file from HDFS
         Path queryFilePath = new Path(queryPath);
         FSDataInputStream inputStream = fs.open(queryFilePath);
@@ -212,37 +219,46 @@ public class BookQuery {
         long fileCount = cs.getFileCount();
         conf.setLong("totalDocuments", fileCount);
 
-        // System.out.println("This is a query: " + query);
-        // System.out.println("This is total number of documents: " + fileCount);
 
         // Configure and run the first MapReduce job
         Job job1 = Job.getInstance(conf, "Jaccard Similarity - Job 1");
         job1.setJarByClass(BookQuery.class);
         job1.setMapperClass(Mapper1.class);
         job1.setReducerClass(Reducer1.class);
-
-        job1.setOutputKeyClass(LongWritable.class);
+        job1.setOutputKeyClass(Text.class);
         job1.setOutputValueClass(Text.class);
 
         FileInputFormat.addInputPath(job1, new Path(input));
-        Path temp = new Path(output + "_temp");
-        FileOutputFormat.setOutputPath(job1, temp);
-
+        Path temp1 = new Path(output + "_temp1");
+        FileOutputFormat.setOutputPath(job1, temp1);
         job1.waitForCompletion(true);
-        // System.exit(job1.waitForCompletion(true) ? 0 : 1);
+
 
         // Configure and run the second MapReduce job
         Job job2 = Job.getInstance(conf, "Jaccard Similarity - Job 2");
         job2.setJarByClass(BookQuery.class);
         job2.setMapperClass(Mapper2.class);
         job2.setReducerClass(Reducer2.class);
-
         job2.setOutputKeyClass(Text.class);
         job2.setOutputValueClass(Text.class);
 
-        FileInputFormat.addInputPath(job2, temp);
-        FileOutputFormat.setOutputPath(job2, new Path(output));
+        FileInputFormat.addInputPath(job2, temp1);
+        Path temp2 = new Path(output + "_temp2");
+        FileOutputFormat.setOutputPath(job2, temp2);
+        job2.waitForCompletion(true);
 
-        System.exit(job2.waitForCompletion(true) ? 0 : 1);
+
+        // Configure and run the third MapReduce job
+        Job job3 = Job.getInstance(conf, "Jaccard Similarity - Job 3");
+        job3.setJarByClass(BookQuery.class);
+        job3.setMapperClass(Mapper3.class);
+        job3.setReducerClass(Reducer3.class);
+        job3.setOutputKeyClass(Text.class);
+        job3.setOutputValueClass(Text.class);
+
+        FileInputFormat.addInputPath(job3, temp2);
+        FileOutputFormat.setOutputPath(job3, new Path(output));
+
+        System.exit(job3.waitForCompletion(true) ? 0 : 1);
     }
 }
