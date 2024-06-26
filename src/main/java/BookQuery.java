@@ -18,10 +18,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 // import java.util.Collections;
 
 
@@ -74,21 +71,33 @@ public class BookQuery {
         @Override
         protected void reduce(Text Url, Iterable<Text> terms, Context context) throws IOException, InterruptedException {
             // Get number of terms in the current document
+            // Iterable can only be traversed once
+            Set<String> TermSet = new HashSet<>();
+            for (Text term : terms) {
+                TermSet.add(term.toString());
+            }
+
             int termCount = 0;
-            for (Text value : terms) {
+            for (String term : TermSet) {
                 termCount++;
             }
 
-            for (Text term : terms) {
+            for (String term : TermSet) {
                 context.write(new Text(term), new Text(Url + "@" + termCount));
             }
         }
     }
 
     public static class Mapper2 extends Mapper<Object, Text, Text, Text> {
+
         @Override
         protected void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-            context.write(new Text(String.valueOf(key)), new Text(value));
+
+            String term = value.toString().split("\t")[0];
+            String UrlAndLength = value.toString().split("\t")[1];
+
+            context.write(new Text(term), new Text(UrlAndLength));
+
         }
     }
 
@@ -122,7 +131,7 @@ public class BookQuery {
     }
 
     public static class Mapper3 extends Mapper<Object, Text, Text, Text> {
-        private final Set<String> queryTermSet = new HashSet<>();
+        /* private final Set<String> queryTermSet = new HashSet<>();
         private String queryTermsCount;
 
         // setup is called ONCE for each mapper, then all calls to the map func is made
@@ -138,19 +147,28 @@ public class BookQuery {
                 queryTermSet.add(term);
             }
             queryTermsCount = Integer.toString(queryTermSet.size()); // String queryTermsCount = String.valueOf(queryTerms.size());
-        }
-
+        } */
         @Override
         protected void map(Object autoIncrement, Text value, Context context) throws IOException, InterruptedException {
             // Parse the input value to get the list of URLs
-            String[] urlAndLengthArray = value.toString().split("\t")[1].split(",");
-            // String[] urlAndLengthArray = value.toString().split(",");
+            ArrayList<String> urlAndLengthArray = new ArrayList<>(Arrays.asList(value.toString().split("\t")[1].split(",")));
+            // String[] urlAndLengthArray = value.toString().split("\t")[1].split(",");
 
-            // Emit pairs of URLs for Jaccard similarity calculation
-            String oneString = "1";
+            // Find the query URL and length
+            String urlAndLengthQuery = "";
             for (String urlAndLength : urlAndLengthArray) {
-                if (!urlAndLength.split("@")[0].equals("query")) {
-                    context.write(new Text(urlAndLength + "@query@" + queryTermsCount), new Text(oneString));
+                if (urlAndLength.split("@")[0].equals("query")) {
+                    urlAndLengthQuery = urlAndLength;
+                    break;
+                }
+            }
+            urlAndLengthArray.remove(urlAndLengthQuery);
+            // Don't know how query can be missing from urlAndLengthArray, but a small portion of the key-value pair {term, [url@w]} does not have query in [url@w]. It maybe has something to do with Speculative Execution.
+            if (!urlAndLengthQuery.isEmpty()) {
+                // Emit pairs of URLs for Jaccard similarity calculation
+                String oneString = "1";
+                for (String urlAndLength : urlAndLengthArray) {
+                    context.write(new Text(urlAndLength + "@" + urlAndLengthQuery), new Text(oneString));
                 }
             }
         }
@@ -231,6 +249,7 @@ public class BookQuery {
         FileInputFormat.addInputPath(job1, new Path(input));
         Path temp1 = new Path(output + "_temp1");
         FileOutputFormat.setOutputPath(job1, temp1);
+
         job1.waitForCompletion(true);
 
 
@@ -245,6 +264,7 @@ public class BookQuery {
         FileInputFormat.addInputPath(job2, temp1);
         Path temp2 = new Path(output + "_temp2");
         FileOutputFormat.setOutputPath(job2, temp2);
+
         job2.waitForCompletion(true);
 
 
